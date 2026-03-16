@@ -1,0 +1,189 @@
+import re
+from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman"],
+})
+
+FJERNVARME_XLSX = r"Elkem_energitilførsel_2025.xlsx"
+TEMP_XLSX = r"Orkanger_temp.xlsx"
+
+SHEET_FJERNVARME = 0
+SHEET_TEMP = 0
+
+OUTPUT_DIR = "output_daglig"
+OUTPUT_EXCEL = "daglig_fjernvarme_og_temp_2025.xlsx"
+OUTPUT_CSV = "daglig_fjernvarme_og_temp_2025.csv"
+SHOW_PLOTS = True
+
+
+def ensure_output_dir(path: str) -> Path:
+    p = Path(path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def parse_start_datetime_fjernvarme(date_range_text: str):
+    """
+    Parser starttidspunkt fra tekst som:
+      '01.01.2025 00:00-01:00'
+      '01.01.2025 00:00 - 01:00'
+    Returnerer pandas Timestamp.
+    """
+    if pd.isna(date_range_text):
+        return pd.NaT
+
+    s = str(date_range_text).strip()
+    m = re.search(r"(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})", s)
+    if not m:
+        return pd.NaT
+
+    dt_str = f"{m.group(1)} {m.group(2)}"
+    return pd.to_datetime(dt_str, format="%d.%m.%Y %H:%M", errors="coerce")
+
+
+def read_fjernvarme_excel(
+    excel_path: str,
+    sheet_name=0,
+    totals_row_excel=6,
+    data_start_row_excel=7
+):
+    raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=None)
+
+    totals_row_idx = totals_row_excel - 1
+    data_start_idx = data_start_row_excel - 1
+
+    totals = {
+        "sum_ht_kWt": raw.iat[totals_row_idx, 1],
+        "sum_damp_kWt": raw.iat[totals_row_idx, 2],
+        "sum_fjernvarme_kWt": raw.iat[totals_row_idx, 3],
+    }
+
+    df = raw.iloc[data_start_idx:, 0:4].copy()
+    df.columns = ["dato_range", "ht_kWt", "damp_kWt", "sum_kWt"]
+
+    for c in ["ht_kWt", "damp_kWt", "sum_kWt"]:
+        df[c] = df[c].astype(str).str.replace(",", "", regex=False)
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df["dt"] = df["dato_range"].apply(parse_start_datetime_fjernvarme)
+    df = df.dropna(subset=["dt"]).sort_values("dt").reset_index(drop=True)
+    df = df.set_index("dt")
+
+    return df, totals
+
+
+def read_temperature_excel(
+    excel_path: str,
+    sheet_name=0,
+    data_start_row_excel=2
+):
+    raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=None)
+
+    start_idx = data_start_row_excel - 1
+
+    temp_df = raw.iloc[start_idx:, [2, 3]].copy()
+    temp_df.columns = ["dt", "temp_C"]
+
+    temp_df["dt"] = pd.to_datetime(
+        temp_df["dt"],
+        format="%d.%m.%Y %H:%M",
+        errors="coerce"
+    )
+    temp_df["temp_C"] = pd.to_numeric(temp_df["temp_C"], errors="coerce")
+
+    temp_df = temp_df.dropna(subset=["dt", "temp_C"]).sort_values("dt")
+    temp_df = temp_df.set_index("dt")
+
+    return temp_df
+
+
+def plot_daily_two_panels(daily, outdir, show):
+    import matplotlib.ticker as mticker
+    import matplotlib.dates as mdates
+
+    thousands = mticker.FuncFormatter(lambda x, pos: f"{x:,.0f}".replace(",", "."))
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(18, 8))
+
+    ax1.plot(daily.index, daily["fjernvarme_kWt_dag"], linewidth=1.8)
+    ax1.set_title("Daglig total spillvarme (2025)", fontsize=22, pad=14)
+    ax1.set_ylabel("Energi [kWh/dag]", fontsize=20, labelpad=15)
+    ax1.tick_params(axis="both", labelsize=18)
+    ax1.grid(alpha=0.3)
+    ax1.ticklabel_format(axis="y", style="plain", useOffset=False)
+    ax1.yaxis.set_major_formatter(thousands)
+
+    ax2.plot(daily.index, daily["temp_C_mean"], linewidth=1.8)
+    ax2.set_title("Daglig middeltemperatur (2025)", fontsize=22, pad=14)
+    ax2.set_ylabel("Temperatur [°C]", fontsize=20, labelpad=15)
+    ax2.tick_params(axis="both", labelsize=18)
+    ax2.grid(alpha=0.3)
+
+    months_no = ["jan", "feb", "mar", "apr", "mai", "jun",
+                 "jul", "aug", "sep", "okt", "nov", "des"]
+
+    ax2.xaxis.set_major_locator(mdates.MonthLocator())
+
+    def norwegian_month_formatter(x, pos):
+        dt = mdates.num2date(x)
+        return months_no[dt.month - 1]
+
+    ax2.xaxis.set_major_formatter(mticker.FuncFormatter(norwegian_month_formatter))
+
+    fig.tight_layout()
+    fig.savefig(outdir / "daglig_fjernvarme_og_temp_to_paneler.png", dpi=300)
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
+
+
+def main():
+    outdir = ensure_output_dir(OUTPUT_DIR)
+
+    df_heat, totals = read_fjernvarme_excel(
+        FJERNVARME_XLSX,
+        sheet_name=SHEET_FJERNVARME
+    )
+    df_temp = read_temperature_excel(
+        TEMP_XLSX,
+        sheet_name=SHEET_TEMP
+    )
+
+    print("Antall timer fjernvarme:", len(df_heat))
+    print("Antall timer temperatur:", len(df_temp))
+
+    merged_hourly = df_heat.join(df_temp, how="inner")
+
+    daily = merged_hourly.resample("D").agg(
+        fjernvarme_kWt_dag=("sum_kWt", "sum"),
+        ht_kWt_dag=("ht_kWt", "sum"),
+        damp_kWt_dag=("damp_kWt", "sum"),
+        temp_C_mean=("temp_C", "mean"),
+    ).dropna(subset=["fjernvarme_kWt_dag", "temp_C_mean"])
+
+    plot_daily_two_panels(daily, outdir, SHOW_PLOTS)
+
+    print("\nDaglig maks fjernvarme [kWt/dag]:", daily["fjernvarme_kWt_dag"].max())
+    print("Årssum fra daglige verdier [kWt]:", daily["fjernvarme_kWt_dag"].sum())
+    print("Totalsum (rad 6) sum_fjernvarme_kWt:", totals.get("sum_fjernvarme_kWt"))
+
+    excel_path = outdir / OUTPUT_EXCEL
+    csv_path = outdir / OUTPUT_CSV
+
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+        daily.to_excel(writer, sheet_name="daglig_data")
+        merged_hourly.to_excel(writer, sheet_name="time_data", freeze_panes=(1, 1))
+
+    daily.to_csv(csv_path, index=True, sep=";", decimal=".")
+
+    print(f"\nLagret daglig datasett til:\n- {excel_path.resolve()}\n- {csv_path.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
