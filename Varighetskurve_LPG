@@ -1,0 +1,172 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+
+OUTPUT_DIR = Path("figurer_2025")
+SHOW_PLOTS = True
+
+GASSKILDE1_FILE = Path("Kjeleffekt_Furumoen_2025.xlsx")
+GASSKILDE2_FILE = Path("Kjeleffekt_Strandheim_2025.xlsx")
+SHEET = 0
+
+
+def ensure_output_dir(path) -> Path:
+    p = Path(path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def load_gass_tft(file: Path, sheet=0, start_row=2, date_col=0, power_col=1):
+    df = pd.read_excel(file, sheet_name=sheet, skiprows=start_row - 1, header=None)
+
+    ts = pd.to_datetime(
+        df.iloc[:, date_col],
+        format="%Y-%m-%d %H:%M:%S",
+        errors="coerce"
+    )
+    kw = pd.to_numeric(df.iloc[:, power_col], errors="coerce")
+
+    out = pd.DataFrame({"kW": kw.values}, index=ts)
+    out = out[~out.index.isna()].sort_index()
+    out = out.dropna(subset=["kW"])
+    return out
+
+
+def duration_curve_full_year(df_kw):
+    df = df_kw.copy().sort_index().resample("H").mean()
+    p = df["kW"].fillna(0.0).values
+    p_sorted = np.sort(p)[::-1]
+    hours = np.arange(1, len(p_sorted) + 1)
+    return hours, p_sorted
+
+
+def evaluate_biomass_cases(load_kw: pd.Series, capacities_kw, dt_hours=1.0) -> pd.DataFrame:
+    load_kw = load_kw.copy().sort_index().fillna(0.0)
+    total_energy_kwh = float((load_kw * dt_hours).sum())
+
+    rows = []
+    for cap in capacities_kw:
+        flis_kw = np.minimum(load_kw.values, cap)
+        lpg_kw = np.maximum(load_kw.values - cap, 0.0)
+
+        rows.append({
+            "Flis_kapasitet_MW": cap / 1000,
+            "Total_LPG_energi_kWh": total_energy_kwh,
+            "Dekket_av_flis_kWh": float((flis_kw * dt_hours).sum()),
+            "Gjenstår_LPG_kWh": float((lpg_kw * dt_hours).sum()),
+            "Dekningsgrad_flis_%": 100 * (flis_kw * dt_hours).sum() / total_energy_kwh if total_energy_kwh > 0 else 0.0,
+            "Timer_over_kapasitet": int((load_kw.values > cap).sum()),
+            "Maks_restlast_kW": float(lpg_kw.max())
+        })
+
+    return pd.DataFrame(rows)
+
+
+outdir = ensure_output_dir(OUTPUT_DIR)
+
+g1_kw = load_gass_tft(GASSKILDE1_FILE, sheet=SHEET)
+g2_kw = load_gass_tft(GASSKILDE2_FILE, sheet=SHEET)
+
+full_year = pd.date_range(
+    "2025-01-01 00:00",
+    "2025-12-31 23:00",
+    freq="H"
+)
+
+g1h = g1_kw.resample("H").mean().reindex(full_year)
+g2h = g2_kw.resample("H").mean().reindex(full_year)
+
+g_total = pd.DataFrame(index=full_year)
+g_total["g1_kW"] = g1h["kW"]
+g_total["g2_kW"] = g2h["kW"]
+
+missing_any = g_total["g1_kW"].isna() | g_total["g2_kW"].isna()
+print("Timer med manglende data (minst én kjel):", int(missing_any.sum()))
+
+g_total = g_total.fillna(0.0)
+g_total["total_kW"] = g_total["g1_kW"] + g_total["g2_kW"]
+
+load_hourly_kw = g_total["total_kW"]
+
+print("Total LPG energi (GWh):", load_hourly_kw.sum() / 1e6)
+print("Antall timer:", len(load_hourly_kw))
+
+capacities_kw = [2500, 5000, 7500, 10000]
+cases_df = evaluate_biomass_cases(load_hourly_kw, capacities_kw)
+
+print("\n CASES (ENERGI / AREAL) ")
+for _, r in cases_df.iterrows():
+    print(
+        f"{r['Flis_kapasitet_MW']:.1f} MW: "
+        f"Dekket av flis {r['Dekket_av_flis_kWh']/1000:.1f} MWh, "
+        f"Gjenstår LPG {r['Gjenstår_LPG_kWh']/1000:.1f} MWh, "
+        f"Timer over {int(r['Timer_over_kapasitet'])} t, "
+        f"Maks restlast {r['Maks_restlast_kW']:.0f} kW"
+    )
+
+h_tot, p_tot_kw = duration_curve_full_year(
+    g_total[["total_kW"]].rename(columns={"total_kW": "kW"})
+)
+
+p_tot_MW = p_tot_kw / 1000.0
+cases_MW = [2.5, 5.0, 7.5, 10.0]
+case_colors = ["#E69F00", "#009E73", "#CC79A7", "#D55E00"]
+
+fig = plt.figure(figsize=(12, 6))
+plt.plot(
+    h_tot,
+    p_tot_MW,
+    linewidth=2.5,
+    color="#1f77b4",
+    label="Total LPG (Furumoen + Strandheim)"
+)
+
+ax = plt.gca()
+x_text = 0.08
+y_top = 0.86
+dy = 0.06
+
+for i, (case, col) in enumerate(zip(cases_MW, case_colors)):
+    ax.axhline(case, linestyle="--", linewidth=2, color=col, label=f"Flis {case:g} MW")
+    hours_over = int((p_tot_MW > case).sum())
+    ax.axvline(hours_over, linestyle=":", color=col, alpha=0.5)
+    ax.text(
+        x_text,
+        y_top - i * dy,
+        f">{case:g} MW: {hours_over} timer",
+        transform=ax.transAxes,
+        fontsize=14,
+        bbox=dict(facecolor="white", alpha=0.75, edgecolor="none")
+    )
+
+plt.xlim(0, 700)
+plt.xlabel("Varighet [timer per år]", fontsize=20, labelpad=15)
+plt.ylabel("Effekt [MW]", fontsize=20, labelpad=15)
+plt.title("Varighetskurve – Total LPG (2025)", fontsize=22, pad=12)
+plt.xticks(fontsize=18)
+plt.yticks(fontsize=18)
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=13)
+plt.tight_layout()
+plt.savefig(outdir / "varighetskurve_total_LPG_2025.png", dpi=200)
+
+if SHOW_PLOTS:
+    plt.show()
+
+plt.close(fig)
+
+total_hours = len(load_hourly_kw)
+g_total_hours = int((load_hourly_kw > 0).sum())
+
+print("\n DRIFTSTIMER TOTAL LPG")
+print(f"Total LPG {g_total_hours} timer ({100 * g_total_hours / total_hours:.2f} % av året)")
+print(f"Totalt timer i datasettet: {total_hours}")
+
+thresholds_kw = [10, 50, 100, 250, 500, 1000]
+
+print("\n TIMER MED FAKTISK EFFEKT ")
+for th in thresholds_kw:
+    hours = int((load_hourly_kw > th).sum())
+    energy_mwh = load_hourly_kw[load_hourly_kw > th].sum() / 1000
+    print(f"Over {th:>4} kW: {hours:>4} timer, energi i disse timene: {energy_mwh:.1f} MWh")
