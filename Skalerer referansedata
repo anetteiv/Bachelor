@@ -1,0 +1,156 @@
+import pandas as pd
+import os
+
+fil_utbygging = "/Users/jonasutvaer/Desktop/Case_2_Potensiell-utbygning_kay.xlsx"
+arknavn = "4.2 Kurs mot til Grønøra med en"
+
+mappe_maledata = "/Users/jonasutvaer/Desktop/Data_case_2"
+mappe_output = "/Users/jonasutvaer/Desktop/Skalert_data_case_2"
+fil_oversikt = "/Users/jonasutvaer/Desktop/Oversikt_skalert_data.xlsx"
+
+byggnavn = "Technip FMC"
+
+os.makedirs(mappe_output, exist_ok=True)
+
+df = pd.read_excel(fil_utbygging, sheet_name=arknavn)
+df.columns = df.columns.astype(str).str.strip()
+df["Bygg"] = df["Bygg"].astype(str).str.strip()
+
+treff = df[df["Bygg"] == byggnavn]
+
+if treff.empty:
+    print(f"Fant ikke bygget '{byggnavn}'")
+else:
+    rad = treff.iloc[0]
+
+    maler = int(pd.to_numeric(rad["Målernummer"], errors="coerce"))
+    onsket_installert_effekt = float(pd.to_numeric(rad["Effekt kW"], errors="coerce"))
+    onsket_ny_arsenergi = float(pd.to_numeric(rad["Energi kWt"], errors="coerce"))
+
+    fil_maledata = os.path.join(mappe_maledata, f"{maler}.xlsx")
+
+    if not os.path.exists(fil_maledata):
+        print("Fant ikke måledatafilen:")
+        print(fil_maledata)
+    else:
+        df_maledata = pd.read_excel(fil_maledata)
+        df_maledata.columns = df_maledata.columns.astype(str).str.strip()
+
+        df_maledata["Dato"] = pd.to_datetime(df_maledata["Dato"], errors="coerce")
+        df_maledata["Energy"] = pd.to_numeric(df_maledata["Energy"], errors="coerce")
+
+        df_maledata = df_maledata.dropna(subset=["Dato", "Energy"]).copy()
+        df_maledata = df_maledata.sort_values("Dato")
+
+        beregnet_eksisterende_arsenergi = df_maledata["Energy"].sum()
+        beregnet_installert_effekt = df_maledata["Energy"].max()
+        min_val = df_maledata["Energy"].min()
+
+        median = df_maledata["Energy"].median()
+        gjennomsnitt = df_maledata["Energy"].mean()
+        typetall = df_maledata["Energy"].mode().tolist()
+
+        dato_maks = df_maledata.loc[df_maledata["Energy"].idxmax(), "Dato"]
+        dato_min = df_maledata.loc[df_maledata["Energy"].idxmin(), "Dato"]
+
+        skalering = onsket_ny_arsenergi / beregnet_eksisterende_arsenergi
+        df_maledata["Energy_scaled"] = df_maledata["Energy"] * skalering
+
+        ny_sum = df_maledata["Energy_scaled"].sum()
+        ny_installert_effekt = df_maledata["Energy_scaled"].max()
+        ny_min = df_maledata["Energy_scaled"].min()
+
+        ny_median = df_maledata["Energy_scaled"].median()
+        ny_mean = df_maledata["Energy_scaled"].mean()
+        ny_typetall = df_maledata["Energy_scaled"].mode().tolist()
+
+        print("MÅLEDATA LEST INN")
+        print("Fil:", fil_maledata)
+        print("Antall rader:", len(df_maledata))
+
+        print("\n")
+        print("NØKKELTALL FOR EKSISTERENDE MÅLER")
+        print("Målernummer:", maler)
+        print("Årsenergi i målefil:", round(beregnet_eksisterende_arsenergi), "kWh")
+        print("Høyeste timeverdi:", round(beregnet_installert_effekt))
+        print("Dato for høyeste verdi:", dato_maks)
+        print("Laveste timeverdi:", round(min_val))
+        print("Dato for laveste verdi:", dato_min)
+        print("Gjennomsnitt:", round(gjennomsnitt, 2))
+        print("Median:", median)
+        print("Typetall:", typetall)
+
+        print("\n")
+        print("SKALERING")
+        print("Skaleringsfaktor:", round(skalering, 4))
+        print("Ny sum energi:", round(ny_sum, 1), "kWh")
+        print("Ny maks timeverdi:", round(ny_installert_effekt, 2))
+        print("Ny laveste timeverdi:", round(ny_min, 2))
+        print("Ny median:", round(ny_median, 2))
+        print("Ny gjennomsnitt:", round(ny_mean, 2))
+        print("Nytt typetall:", ny_typetall)
+
+        ny_rad = pd.DataFrame({
+            "Bygg": [byggnavn],
+            "Målernummer": [maler],
+            "Ønsket installert effekt kW": [onsket_installert_effekt],
+            "Beregnet installert effekt kW": [round(beregnet_installert_effekt, 2)],
+            "Ny installert effekt kW": [round(ny_installert_effekt, 2)],
+            "Ønsket eksisterende årsenergi kWh": [round(onsket_ny_arsenergi)],
+            "Beregnet eksisterende årsenergi kWh": [round(beregnet_eksisterende_arsenergi)],
+            "Ny årsenergi kWh": [round(ny_sum)],
+            "Skaleringsfaktor": [round(skalering, 4)]
+        })
+
+        output_tidsserie = os.path.join(
+            mappe_output,
+            f"{byggnavn}_skalert.xlsx"
+        )
+
+        df_maledata.to_excel(output_tidsserie, index=False)
+
+        output_oppsummering = os.path.join(
+            mappe_output,
+            f"{byggnavn}_oppsummering.xlsx"
+        )
+
+        ny_rad.to_excel(output_oppsummering, index=False)
+
+        if os.path.exists(fil_oversikt):
+            eksisterende_oversikt = pd.read_excel(fil_oversikt)
+
+            if "Bygg" in eksisterende_oversikt.columns:
+                eksisterende_oversikt["Bygg"] = eksisterende_oversikt["Bygg"].astype(str).str.strip()
+                eksisterende_oversikt = eksisterende_oversikt[eksisterende_oversikt["Bygg"] != byggnavn]
+
+            df_oversikt = pd.concat([eksisterende_oversikt, ny_rad], ignore_index=True)
+        else:
+            df_oversikt = ny_rad.copy()
+
+        df_oversikt.to_excel(fil_oversikt, index=False)
+
+        print("\n")
+        print("FILER LAGRET")
+        print("Skalert tidsserie lagret her:")
+        print(output_tidsserie)
+
+        print("\nOppsummering lagret her:")
+        print(output_oppsummering)
+
+        print("\nOversiktsfil oppdatert her:")
+        print(fil_oversikt)
+
+        import matplotlib.pyplot as plt
+
+plt.figure(figsize=(14, 6))
+plt.plot(df_maledata["Dato"], df_maledata["Energy"], label="Eksisterende")
+plt.plot(df_maledata["Dato"], df_maledata["Energy_scaled"], label="Skalert")
+
+plt.title(f"Eksisterende og skalert timeserie for {byggnavn}")
+plt.xlabel("Dato")
+plt.ylabel("Energi [kWh/time]")
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
