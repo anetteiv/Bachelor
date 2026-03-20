@@ -1,0 +1,113 @@
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+
+mappe_maledata = "/Users/jonasutvaer/Desktop/Data_case_2"
+mappe_output = "/Users/jonasutvaer/Desktop/Skalert_data_case_2"
+
+byggnavn = "Drivhusgata 2.0"
+malere = [80097651, 85260293]
+onsket_ny_arsenergi = 500000
+
+os.makedirs(mappe_output, exist_ok=True)
+
+def les_maledata(maler_nr):
+    fil = os.path.join(mappe_maledata, f"{maler_nr}.xlsx")
+
+    if not os.path.exists(fil):
+        raise FileNotFoundError(f"Fant ikke fil: {fil}")
+
+    df = pd.read_excel(fil)
+    df.columns = df.columns.astype(str).str.strip()
+
+    if "Dato" not in df.columns or "Energy" not in df.columns:
+        raise ValueError(f"Filen {fil} mangler kolonnene 'Dato' og/eller 'Energy'")
+
+    df["Dato"] = pd.to_datetime(df["Dato"], errors="coerce")
+    df["Energy"] = pd.to_numeric(df["Energy"], errors="coerce")
+
+    df = df.dropna(subset=["Dato", "Energy"]).copy()
+
+    df = df.groupby("Dato", as_index=False)["Energy"].sum()
+
+    df = df.rename(columns={"Energy": f"Energy_{maler_nr}"})
+
+    df = df.set_index("Dato").sort_index()
+
+    return df
+
+df_liste = []
+for maler in malere:
+    df_tmp = les_maledata(maler)
+    df_liste.append(df_tmp)
+
+df_sum = pd.concat(df_liste, axis=1)
+
+df_sum = df_sum.fillna(0)
+
+energy_cols = [col for col in df_sum.columns if col.startswith("Energy_")]
+df_sum["Energy_total"] = df_sum[energy_cols].sum(axis=1)
+
+print()
+print("KONTROLL FØR SKALERING")
+
+for col in energy_cols:
+    print(f"{col}: {round(df_sum[col].sum(), 1)} kWh")
+
+beregnet_eksisterende_arsenergi = df_sum["Energy_total"].sum()
+print(f"Sum original energi: {round(beregnet_eksisterende_arsenergi, 1)} kWh")
+
+if beregnet_eksisterende_arsenergi <= 0:
+    raise ValueError("Summen av original energi er 0 eller mindre. Kan ikke skalere.")
+
+skalering = onsket_ny_arsenergi / beregnet_eksisterende_arsenergi
+print(f"Skaleringsfaktor: {skalering:.6f}")
+
+for col in energy_cols:
+    df_sum[f"{col}_scaled"] = df_sum[col] * skalering
+
+scaled_cols = [f"{col}_scaled" for col in energy_cols]
+df_sum["Energy_total_scaled"] = df_sum[scaled_cols].sum(axis=1)
+
+print()
+print("KONTROLL ETTER SKALERING")
+
+for col in scaled_cols:
+    print(f"{col}: {round(df_sum[col].sum(), 1)} kWh")
+
+print(f"Sum skalert energi: {round(df_sum['Energy_total_scaled'].sum(), 1)} kWh")
+
+print()
+print("KONTROLL AV FORHOLD")
+
+for col in energy_cols:
+    original = df_sum[col].sum()
+    scaled = df_sum[f"{col}_scaled"].sum()
+    print(f"{col}: original={round(original,1)} kWh | skalert={round(scaled,1)} kWh")
+
+beregnet_installert_effekt = df_sum["Energy_total"].max()
+ny_installert_effekt = df_sum["Energy_total_scaled"].max()
+
+print()
+print("NØKKELTALL")
+print(f"Original samlet maks timeverdi: {round(beregnet_installert_effekt, 2)} kWh/h")
+print(f"Ny samlet maks timeverdi: {round(ny_installert_effekt, 2)} kWh/h")
+
+df_sum = df_sum.reset_index()
+
+output_tidsserie = os.path.join(mappe_output, f"{byggnavn}_to_malere_skalert.xlsx")
+df_sum.to_excel(output_tidsserie, index=False)
+
+print("\nFil lagret her:")
+print(output_tidsserie)
+
+plt.figure(figsize=(14, 6))
+plt.plot(df_sum["Dato"], df_sum["Energy_total"], label="Eksisterende samlet")
+plt.plot(df_sum["Dato"], df_sum["Energy_total_scaled"], label="Skalert samlet")
+plt.title(f"Eksisterende og skalert timeserie for {byggnavn}")
+plt.xlabel("Dato")
+plt.ylabel("Energi [kWh/time]")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
