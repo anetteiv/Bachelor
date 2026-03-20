@@ -1,0 +1,183 @@
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+
+fil_utbygging = "/Users/jonasutvaer/Desktop/Case_2_Potensiell-utbygning_kay.xlsx"
+arknavn = "4.4 Kurs fra Norsk Kylling og f"
+
+mappe_skalert = "/Users/jonasutvaer/Desktop/Skalert_data_case_2"
+mappe_output = "/Users/jonasutvaer/Desktop/Skalert_data_case_2"
+
+output_fil = os.path.join(mappe_output, "4.4 Kurs fra Norsk Kylling og f.xlsx")
+
+df_utbygging = pd.read_excel(fil_utbygging, sheet_name=arknavn)
+df_utbygging.columns = df_utbygging.columns.astype(str).str.strip()
+
+if "Bygg" not in df_utbygging.columns:
+    raise ValueError("Fant ikke kolonnen 'Bygg' i utbyggingsarket.")
+
+df_utbygging["Bygg"] = df_utbygging["Bygg"].astype(str).str.strip()
+df_utbygging = df_utbygging[df_utbygging["Bygg"].notna()]
+df_utbygging = df_utbygging[df_utbygging["Bygg"] != ""]
+
+df_utbygging = df_utbygging[~df_utbygging["Bygg"].str.lower().eq("total")]
+df_utbygging = df_utbygging[~df_utbygging["Bygg"].str.lower().eq("nan")]
+
+if "Effekt kW" in df_utbygging.columns:
+    df_utbygging["Effekt kW"] = pd.to_numeric(df_utbygging["Effekt kW"], errors="coerce")
+    total_onsket_installert_effekt = df_utbygging["Effekt kW"].sum()
+else:
+    total_onsket_installert_effekt = None
+
+if "Energi kWt" in df_utbygging.columns:
+    df_utbygging["Energi kWt"] = pd.to_numeric(df_utbygging["Energi kWt"], errors="coerce")
+    total_onsket_arsenergi = df_utbygging["Energi kWt"].sum()
+else:
+    total_onsket_arsenergi = None
+
+bygg_liste = df_utbygging["Bygg"].tolist()
+
+print("BYGG FUNNET I ARKET")
+for bygg in bygg_liste:
+    print(bygg)
+
+def les_skalert_fil(byggnavn, mappe_skalert):
+    filnavn = f"{byggnavn}_skalert.xlsx"
+    filsti = os.path.join(mappe_skalert, filnavn)
+
+    if not os.path.exists(filsti):
+        print(f"Fant ikke fil: {filnavn}")
+        return None, filsti
+
+    df = pd.read_excel(filsti)
+    df.columns = df.columns.astype(str).str.strip()
+
+    if "Dato" not in df.columns:
+        raise ValueError(f"Filen {filnavn} mangler kolonnen 'Dato'.")
+
+    df["Dato"] = pd.to_datetime(df["Dato"], errors="coerce")
+    df = df.dropna(subset=["Dato"]).copy()
+
+    mulige_kolonner = [
+        "Energy_total_scaled",
+        "Energy_scaled",
+        "Energy_total",
+        "Energy"
+    ]
+
+    energikolonne = None
+    for kol in mulige_kolonner:
+        if kol in df.columns:
+            energikolonne = kol
+            break
+
+    if energikolonne is None:
+        raise ValueError(
+            f"Filen {filnavn} mangler en forventet energikolonne. "
+            f"Fant ikke noen av: {mulige_kolonner}"
+        )
+
+    df[energikolonne] = pd.to_numeric(df[energikolonne], errors="coerce")
+    df = df.dropna(subset=[energikolonne]).copy()
+
+    df = df.groupby("Dato", as_index=False)[energikolonne].sum()
+
+    df = df.rename(columns={energikolonne: byggnavn})
+
+    return df, filsti
+
+df_samlet = None
+filer_funnet = []
+filer_ikke_funnet = []
+
+for bygg in bygg_liste:
+    df_bygg, filsti = les_skalert_fil(bygg, mappe_skalert)
+
+    if df_bygg is None:
+        filer_ikke_funnet.append(filsti)
+        continue
+
+    filer_funnet.append(filsti)
+
+    if df_samlet is None:
+        df_samlet = df_bygg.copy()
+    else:
+        df_samlet = pd.merge(df_samlet, df_bygg, on="Dato", how="outer")
+
+if df_samlet is None:
+    raise ValueError("Ingen skalerte filer ble lest inn. Sjekk filnavnene i mappen.")
+
+df_samlet = df_samlet.sort_values("Dato")
+df_samlet = df_samlet.fillna(0)
+
+energikolonner = [kol for kol in df_samlet.columns if kol != "Dato"]
+df_samlet["Sum alle bygg"] = df_samlet[energikolonner].sum(axis=1)
+
+beregnet_total_installert_effekt = df_samlet["Sum alle bygg"].max()
+beregnet_total_arsenergi = df_samlet["Sum alle bygg"].sum()
+
+dato_maks = df_samlet.loc[df_samlet["Sum alle bygg"].idxmax(), "Dato"]
+
+print()
+print("RESULTATER")
+
+if total_onsket_installert_effekt is not None:
+    print("Total ønsket installert effekt fra tabellen:",
+          round(total_onsket_installert_effekt, 2), "kW")
+
+if total_onsket_arsenergi is not None:
+    print("Total ønsket årsenergi fra tabellen:",
+          round(total_onsket_arsenergi, 2), "kWh")
+
+print("Beregnet installert effekt fra samlet timeserie:",
+      round(beregnet_total_installert_effekt, 2), "kW")
+
+print("Dato for maksimal samlet effekt:", dato_maks)
+
+print("Beregnet total årsenergi fra samlet timeserie:",
+      round(beregnet_total_arsenergi, 2), "kWh")
+
+print()
+print("FILER FUNNET")
+for fil in filer_funnet:
+    print(fil)
+
+if filer_ikke_funnet:
+    print()
+    print("FILER IKKE FUNNET")
+    for fil in filer_ikke_funnet:
+        print(fil)
+
+oppsummering = pd.DataFrame({
+    "Parameter": [
+        "Total ønsket installert effekt fra tabellen [kW]",
+        "Total ønsket årsenergi fra tabellen [kWh]",
+        "Beregnet installert effekt fra samlet timeserie [kW]",
+        "Beregnet årsenergi fra samlet timeserie [kWh]",
+        "Dato for maksimal samlet effekt"
+    ],
+    "Verdi": [
+        round(total_onsket_installert_effekt, 2) if total_onsket_installert_effekt is not None else None,
+        round(total_onsket_arsenergi, 2) if total_onsket_arsenergi is not None else None,
+        round(beregnet_total_installert_effekt, 2),
+        round(beregnet_total_arsenergi, 2),
+        str(dato_maks)
+    ]
+})
+
+with pd.ExcelWriter(output_fil, engine="openpyxl") as writer:
+    df_samlet.to_excel(writer, sheet_name="Samlet timeserie", index=False)
+    oppsummering.to_excel(writer, sheet_name="Oppsummering", index=False)
+
+print()
+print("NY EXCEL-FIL LAGRET")
+print(output_fil)
+
+plt.figure(figsize=(15, 6))
+plt.plot(df_samlet["Dato"], df_samlet["Sum alle bygg"])
+plt.title("Samlet skalert timeserie for 4.1 Sentrumskurs mot Orkland Vi")
+plt.xlabel("Dato")
+plt.ylabel("Energi [kWh/time]")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
