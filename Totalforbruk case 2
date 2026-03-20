@@ -1,0 +1,107 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+fil = "/Users/jonasutvaer/Desktop/Samlet data/komplett data.xlsx"
+
+tick_size = 16
+
+def norsk_tusenformat(x, pos):
+    try:
+        return f"{int(x):,}".replace(",", ".")
+    except:
+        return str(x)
+
+formatter = FuncFormatter(norsk_tusenformat)
+
+maneder = ["jan", "feb", "mar", "apr", "mai", "jun",
+           "jul", "aug", "sep", "okt", "nov", "des"]
+
+def måned_format(x, pos):
+    dato = mdates.num2date(x)
+    return maneder[dato.month - 1]
+
+month_formatter = FuncFormatter(måned_format)
+
+df = pd.read_excel(fil)
+df.columns = df.columns.astype(str).str.strip()
+
+nødvendige_kolonner = ["Dato", "Potensiell utbygging", "Kjeleeffekt"]
+mangler = [kol for kol in nødvendige_kolonner if kol not in df.columns]
+
+if mangler:
+    raise KeyError(
+        f"Fant ikke disse kolonnene i fila: {mangler}\n"
+        f"Tilgjengelige kolonner er: {df.columns.tolist()}"
+    )
+
+df["Dato"] = pd.to_datetime(df["Dato"], errors="coerce")
+df["Potensiell utbygging"] = pd.to_numeric(df["Potensiell utbygging"], errors="coerce")
+df["Kjeleeffekt"] = pd.to_numeric(df["Kjeleeffekt"], errors="coerce")
+
+df = df.dropna(subset=["Dato", "Potensiell utbygging", "Kjeleeffekt"]).copy()
+df = df.sort_values("Dato").reset_index(drop=True)
+
+df = df[(df["Dato"] >= "2025-01-01") & (df["Dato"] < "2026-01-01")].copy()
+
+df["Potensiell utbygging [kW]"] = df["Potensiell utbygging"].clip(lower=0)
+df["Utfasing av LPG + potensiell utbygging [kWh/time]"] = (
+    df["Potensiell utbygging"] + df["Kjeleeffekt"]
+).clip(lower=0)
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+ax.plot(
+    df["Dato"],
+    df["Utfasing av LPG + potensiell utbygging [kWh/time]"],
+    color="tab:orange",
+    linewidth=1.8,
+    label="Utfasing av LPG + potensiell utbygging"
+)
+
+ax.plot(
+    df["Dato"],
+    df["Potensiell utbygging [kWh/time]"],
+    color="tab:blue",
+    linewidth=1.8,
+    label="Potensiell utbygging"
+)
+
+ax.set_title(
+    "Beregnet energibehov ved utfasing av LPG og potensiell utbygging",
+    fontsize=22,
+    pad=23
+)
+
+ax.set_xlabel(
+    "Tid",
+    fontsize=20,
+    labelpad=12
+)
+
+ax.set_ylabel(
+    "Energi [kWh/time]",
+    fontsize=20,
+    labelpad=12
+)
+
+ax.tick_params(axis="both", labelsize=tick_size)
+ax.yaxis.set_major_formatter(formatter)
+
+ax.xaxis.set_major_locator(mdates.MonthLocator())
+ax.xaxis.set_major_formatter(month_formatter)
+
+ax.grid(True, alpha=0.3)
+
+ax.legend(
+    fontsize=13,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.98),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
