@@ -1,0 +1,134 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+fil = "/Users/jonasutvaer/Desktop/Samlet data/komplett data.xlsx"
+
+virkningsgrad_flis = 0.935      # 93.5 %
+brennverdi_flis = 725           # kWh/m^3
+lass_storrelse = 100            # m^3 per lastebillass
+
+df = pd.read_excel(fil)
+df.columns = df.columns.astype(str).str.strip()
+
+nødvendige_kolonner = ["Dato", "Potensiell utbygging", "Kjeleeffekt"]
+mangler = [kol for kol in nødvendige_kolonner if kol not in df.columns]
+
+if mangler:
+    raise KeyError(
+        f"Fant ikke disse kolonnene i fila: {mangler}\n"
+        f"Tilgjengelige kolonner er: {df.columns.tolist()}"
+    )
+
+df["Dato"] = pd.to_datetime(df["Dato"], errors="coerce")
+df["Potensiell utbygging"] = pd.to_numeric(df["Potensiell utbygging"], errors="coerce")
+df["Kjeleeffekt"] = pd.to_numeric(df["Kjeleeffekt"], errors="coerce")
+
+df = df.dropna(subset=["Dato", "Potensiell utbygging", "Kjeleeffekt"]).copy()
+df = df.sort_values("Dato").reset_index(drop=True)
+
+df = df[(df["Dato"] >= "2025-01-01") & (df["Dato"] < "2026-01-01")].copy()
+
+df["Total effekt [kW]"] = df["Potensiell utbygging"] + df["Kjeleeffekt"]
+df["Total effekt [kW]"] = df["Total effekt [kW]"].clip(lower=0)
+
+df["Energi levert [kWh]"] = df["Total effekt [kW]"]
+
+nyttbar_energi_per_m3 = brennverdi_flis * virkningsgrad_flis  # kWh/m^3
+
+df["Flisbehov [m3]"] = df["Energi levert [kWh]"] / nyttbar_energi_per_m3
+df["Lass"] = df["Flisbehov [m3]"] / lass_storrelse
+
+iso = df["Dato"].dt.isocalendar()
+df["ISO_år"] = iso.year.astype(int)
+df["Uke"] = iso.week.astype(int)
+
+df = df[df["ISO_år"] == 2025].copy()
+
+ukedata = (
+    df.groupby("Uke", as_index=False)
+      .agg({
+          "Flisbehov [m3]": "sum",
+          "Lass": "sum"
+      })
+)
+
+ukedata["Avrundet"] = ukedata["Lass"].round(0)
+
+ukedata = ukedata[ukedata["Uke"] <= 52].copy()
+
+ukedata = ukedata.sort_values("Uke").reset_index(drop=True)
+ukedata["Ukenummer_løpende"] = range(1, len(ukedata) + 1)
+
+print("\nTilgjengelige kolonner i fila:")
+print(df.columns.tolist())
+
+print("\nNyttbar energi per m^3 flis:")
+print(f"{nyttbar_energi_per_m3:.2f} kWh/m^3")
+
+print("\nOppsummering per uke:")
+print(ukedata[["Uke", "Flisbehov [m3]", "Lass", "Avrundet"]].head(10))
+
+print("\nÅrssum:")
+print(f"Totalt flisbehov: {ukedata['Flisbehov [m3]'].sum():,.1f} m^3".replace(",", " "))
+print(f"Totalt antall lass: {ukedata['Lass'].sum():,.2f}".replace(",", " "))
+print(f"Totalt avrundet antall lass: {ukedata['Avrundet'].sum():,.0f}".replace(",", " "))
+
+def norsk_tallformat(x, pos):
+    return f"{x:,.0f}".replace(",", " ").replace(".", ",")
+
+formatter = FuncFormatter(norsk_tallformat)
+
+fig = plt.figure(figsize=(12, 6))
+
+plt.plot(
+    ukedata["Ukenummer_løpende"],
+    ukedata["Lass"],
+    linewidth=1.8,
+    label="Beregnet"
+)
+
+plt.bar(
+    ukedata["Ukenummer_løpende"],
+    ukedata["Avrundet"],
+    alpha=0.35,
+    label="Avrundet"
+)
+
+ax = plt.gca()
+
+tick_size = 16
+ax.tick_params(axis="both", labelsize=tick_size)
+
+plt.xlabel("Uke", fontsize=20)
+plt.ylabel("Antall flislass [100 m³/lass]", fontsize=20)
+
+plt.title(
+    "Estimert ukentlig behov for flisleveranser",
+    fontsize=22,
+    pad=23
+)
+
+plt.legend(
+    fontsize=13,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.98)
+)
+
+plt.grid(True, alpha=0.3)
+ax.yaxis.set_major_formatter(formatter)
+
+steg = 2
+
+ticks = list(ukedata["Ukenummer_løpende"][::steg])
+labels = list(ukedata["Uke"][::steg])
+
+
+ticks, labels = zip(*sorted(zip(ticks, labels)))
+plt.xticks(ticks, labels)
+
+plt.tight_layout()
+plt.show()
+Skriv til AAAAAAAA
