@@ -1,0 +1,111 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+def tusen_format(x, pos):
+    return f"{int(x):,}".replace(",", ".")
+
+formatter = FuncFormatter(tusen_format)
+
+fil = "/Users/jonasutvaer/Desktop/Kombinert_total_timeserie_2025.xlsx"
+fil_varmetap = "/Users/jonasutvaer/Desktop/Varmetap.xlsx"
+
+df = pd.read_excel(fil)
+varmetap = pd.read_excel(fil_varmetap)
+
+df.columns = df.columns.str.strip()
+varmetap.columns = varmetap.columns.str.strip()
+
+varmetap = varmetap[["Varmetap", "varmetap prosent"]].copy()
+varmetap.columns = ["Måned", "Varmetap_prosent"]
+
+varmetap["Varmetap_prosent"] = pd.to_numeric(varmetap["Varmetap_prosent"], errors="coerce")
+varmetap = varmetap.dropna(subset=["Varmetap_prosent"])
+varmetap = varmetap.iloc[:12].copy()
+
+if varmetap["Varmetap_prosent"].max() <= 1:
+    varmetap["Varmetap_prosent"] = varmetap["Varmetap_prosent"] * 100
+
+varmetap["Måned_nr"] = range(1, len(varmetap) + 1)
+
+varmetap_map = dict(zip(varmetap["Måned_nr"], varmetap["Varmetap_prosent"]))
+
+df["Dato"] = pd.to_datetime(df["Dato"], errors="coerce")
+df["Måned_nr"] = df["Dato"].dt.month
+
+df["Varmetap_prosent"] = df["Måned_nr"].map(varmetap_map)
+
+df["Total_sum"] = df["Total_sum"] * (1 + df["Varmetap_prosent"] / 100)
+
+p_tot_kw = df["Total_sum"].sort_values(ascending=False).reset_index(drop=True)
+h_tot = p_tot_kw.index
+p_tot_MW = p_tot_kw / 1000.0
+
+cases_MW = [2.5, 5.0, 7.5, 10.0, 12.5]
+case_colors = ["#E69F00", "#009E73", "#CC79A7", "#D55E00", "#0072B2"]
+
+fig = plt.figure(figsize=(12, 6))
+
+plt.plot(
+    h_tot,
+    p_tot_MW,
+    linewidth=2.5,
+    color="#1f77b4",
+    label="Total last etter utbygging"
+)
+
+ax = plt.gca()
+
+tick_size = 16
+ax.tick_params(axis="both", labelsize=tick_size)
+
+tekst_x = 0.10
+tekst_y = 0.85
+linje_avstand = 0.06
+
+for i, (case, col) in enumerate(zip(cases_MW, case_colors)):
+    ax.axhline(case, linestyle="--", linewidth=2, color=col, label=f"Flis {case:g} MW")
+
+    hours_over = int((p_tot_MW > case).sum())
+
+    ax.axvline(hours_over, linestyle=":", color=col, alpha=0.5)
+
+    ax.text(
+        tekst_x,
+        tekst_y - i * linje_avstand,
+        f">{case:g} MW: {hours_over} timer",
+        transform=ax.transAxes,
+        fontsize=14,
+        bbox=dict(facecolor="white", alpha=0.75, edgecolor="none")
+    )
+
+legend_x = 0.71
+legend_y = 0.50
+
+plt.legend(
+    fontsize=13,
+    loc="center left",
+    bbox_to_anchor=(legend_x, legend_y)
+)
+
+plt.xlabel("Varighet [timer per år]", fontsize=20)
+plt.ylabel("Effekt [MW]", fontsize=20)
+
+plt.title(
+    "Varighetskurve - effektbehov ved utfasing av LPG og potensiell utbygging",
+    fontsize=22,
+    pad=23
+)
+
+ax.yaxis.set_major_formatter(formatter)
+ax.xaxis.set_major_formatter(formatter)
+
+plt.xlim(-0.01 * len(h_tot), len(h_tot))
+plt.ylim(bottom=0)
+
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
