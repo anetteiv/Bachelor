@@ -1,0 +1,100 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+tick_size = 16
+
+def tusen_format(x, pos):
+    try:
+        return f"{int(x):,}".replace(",", ".")
+    except:
+        return str(x)
+
+formatter = FuncFormatter(tusen_format)
+
+fil_varmetap = "/Users/jonasutvaer/Desktop/Varmetap.xlsx"
+
+data = pd.read_excel(fil_varmetap)
+data.columns = data.columns.str.strip()
+
+data = data[["Varmetap", "varmetap prosent", "Varmetap kWt 2025"]].copy()
+data.columns = ["Måned", "Varmetap_prosent", "Varmetap_kWt"]
+
+data["Varmetap_prosent"] = pd.to_numeric(data["Varmetap_prosent"], errors="coerce")
+data["Varmetap_kWt"] = pd.to_numeric(data["Varmetap_kWt"], errors="coerce")
+
+data = data.dropna(subset=["Varmetap_prosent", "Varmetap_kWt"])
+data = data.iloc[:12].copy()
+
+if data["Varmetap_prosent"].max() <= 1:
+    data["Varmetap_prosent"] = data["Varmetap_prosent"] * 100
+
+maneder = ["jan", "feb", "mar", "apr", "mai", "jun",
+           "jul", "aug", "sep", "okt", "nov", "des"]
+
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+ax1.plot(
+    maneder,
+    data["Varmetap_prosent"],
+    color="tab:blue",
+    linewidth=1.5,
+    label="Varmetap [%]"
+)
+
+ax1.set_title(
+    "Varmetap i fjernvarmenettet",
+    fontsize=22,
+    pad=23
+)
+
+ax1.set_xlabel(
+    "Tid",
+    fontsize=20,
+    labelpad=12
+)
+
+ax1.set_ylabel(
+    "Varmetap [%]",
+    fontsize=20,
+    labelpad=12
+)
+
+ax1.tick_params(axis="both", labelsize=tick_size)
+ax1.grid(True, alpha=0.3)
+
+ax2 = ax1.twinx()
+
+ax2.plot(
+    maneder,
+    data["Varmetap_kWt"],
+    color="tab:orange",
+    linewidth=1.5,
+    label="Varmetap [kWh]"
+)
+
+ax2.set_ylabel(
+    "Varmetap [kWh]",
+    fontsize=20,
+    labelpad=12
+)
+
+ax2.tick_params(axis="y", labelsize=tick_size)
+ax2.yaxis.set_major_formatter(formatter)
+
+linjer = ax1.get_lines() + ax2.get_lines()
+etiketter = [l.get_label() for l in linjer]
+
+ax1.legend(
+    linjer,
+    etiketter,
+    fontsize=13,
+    loc="upper center",
+    bbox_to_anchor=(0.8, 0.98),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
