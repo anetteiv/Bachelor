@@ -1,0 +1,203 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+tick_size = 16
+
+def tusen_format(x, pos):
+    try:
+        return f"{int(x):,}".replace(",", ".")
+    except:
+        return str(x)
+
+formatter = FuncFormatter(tusen_format)
+
+fil_Flis = "/Users/jonasutvaer/Desktop/Kombinert_total_timeserie_2025.xlsx"
+fil_spillvarme = "/Users/jonasutvaer/Desktop/samlet data/Spillvarme elkem.xlsx"
+fil_varmetap = "/Users/jonasutvaer/Desktop/Varmetap.xlsx"
+
+flis = pd.read_excel(fil_Flis)
+spillvarme = pd.read_excel(fil_spillvarme)
+varmetap = pd.read_excel(fil_varmetap)
+
+flis.columns = flis.columns.str.strip()
+spillvarme.columns = spillvarme.columns.str.strip()
+varmetap.columns = varmetap.columns.str.strip()
+
+print("Kolonner i flisfil:", flis.columns.tolist())
+print("Kolonner i spillvarmefil:", spillvarme.columns.tolist())
+print("Kolonner i varmetapfil:", varmetap.columns.tolist())
+
+mulige_datokolonner = ["Dato", "dato", "date", "Date", "Tid", "tid"]
+
+dato_kol_flis = None
+dato_kol_spill = None
+
+for kol in mulige_datokolonner:
+    if kol in flis.columns:
+        dato_kol_flis = kol
+        break
+
+for kol in mulige_datokolonner:
+    if kol in spillvarme.columns:
+        dato_kol_spill = kol
+        break
+
+if dato_kol_flis is None:
+    raise ValueError("Fant ingen datokolonne i flisfilen.")
+
+if dato_kol_spill is None:
+    raise ValueError("Fant ingen datokolonne i spillvarmefilen.")
+
+if "Total_sum" not in flis.columns:
+    raise ValueError("Fant ikke kolonnen 'Total_sum' i flisfilen.")
+
+if "Total_sum" not in spillvarme.columns:
+    raise ValueError("Fant ikke kolonnen 'Total_sum' i spillvarmefilen.")
+
+flis = flis[[dato_kol_flis, "Total_sum"]].copy()
+spillvarme = spillvarme[[dato_kol_spill, "Total_sum"]].copy()
+
+flis.columns = ["Dato", "Flis"]
+spillvarme.columns = ["Dato", "Spillvarme"]
+
+flis["Dato"] = pd.to_datetime(flis["Dato"], errors="coerce")
+spillvarme["Dato"] = pd.to_datetime(spillvarme["Dato"], errors="coerce")
+
+flis["Flis"] = pd.to_numeric(flis["Flis"], errors="coerce")
+spillvarme["Spillvarme"] = pd.to_numeric(spillvarme["Spillvarme"], errors="coerce")
+
+flis = flis.dropna(subset=["Dato", "Flis"])
+spillvarme = spillvarme.dropna(subset=["Dato", "Spillvarme"])
+
+if "Varmetap" not in varmetap.columns:
+    raise ValueError("Fant ikke kolonnen 'Varmetap' i varmetapfilen.")
+
+if "varmetap prosent" not in varmetap.columns:
+    raise ValueError("Fant ikke kolonnen 'varmetap prosent' i varmetapfilen.")
+
+varmetap = varmetap[["Varmetap", "varmetap prosent"]].copy()
+varmetap.columns = ["Måned", "Varmetap_prosent"]
+
+varmetap["Varmetap_prosent"] = pd.to_numeric(varmetap["Varmetap_prosent"], errors="coerce")
+varmetap = varmetap.dropna(subset=["Varmetap_prosent"])
+varmetap = varmetap.iloc[:12].copy()
+
+if varmetap["Varmetap_prosent"].max() <= 1:
+    varmetap["Varmetap_prosent"] = varmetap["Varmetap_prosent"] * 100
+
+varmetap["Måned_nr"] = range(1, len(varmetap) + 1)
+
+varmetap_map = dict(zip(varmetap["Måned_nr"], varmetap["Varmetap_prosent"]))
+
+data = pd.merge(flis, spillvarme, on="Dato", how="inner")
+
+data["Måned_nr"] = data["Dato"].dt.month
+data["Varmetap_prosent"] = data["Måned_nr"].map(varmetap_map)
+
+if data["Varmetap_prosent"].isna().any():
+    raise ValueError("Noen måneder i produksjonsdataene fikk ikke koblet til varmetapprosent.")
+
+data["Flis_med_varmetap"] = data["Flis"] * (1 + data["Varmetap_prosent"] / 100)
+data["Total_produksjon"] = data["Spillvarme"] + data["Flis_med_varmetap"]
+
+data_dogn = (
+    data.set_index("Dato")
+    .resample("D")
+    .sum()
+    .reset_index()
+)
+
+maneder = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"]
+start_aar = data["Dato"].dt.year.min()
+maanedspunkter = [pd.Timestamp(f"{start_aar}-{m:02d}-01") for m in range(1, 13)]
+
+plt.figure(figsize=(12, 6))
+
+plt.plot(
+    data["Dato"],
+    data["Total_produksjon"],
+    color="tab:orange",
+    linewidth=1.5,
+    label="Fliskjel + spillvarme"
+)
+
+plt.plot(
+    data["Dato"],
+    data["Spillvarme"],
+    color="tab:blue",
+    linewidth=1.5,
+    label="Spillvarme fra Elkem"
+)
+
+plt.title(
+    "Fjernvarmeproduksjon fra fliskjel og spillvarme",
+    fontsize=22,
+    pad=23
+)
+
+plt.xlabel("Tid", fontsize=20)
+plt.ylabel("Energi [kWh/time]", fontsize=20)
+
+ax = plt.gca()
+ax.yaxis.set_major_formatter(formatter)
+ax.tick_params(axis="both", labelsize=tick_size)
+
+plt.grid(True, alpha=0.3)
+plt.xticks(maanedspunkter, maneder)
+
+plt.legend(
+    fontsize=13,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.98),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(12, 6))
+
+plt.plot(
+    data_dogn["Dato"],
+    data_dogn["Total_produksjon"],
+    color="tab:orange",
+    linewidth=1.5,
+    label="Fliskjel + spillvarme"
+)
+
+plt.plot(
+    data_dogn["Dato"],
+    data_dogn["Spillvarme"],
+    color="tab:blue",
+    linewidth=1.5,
+    label="Spillvarme fra Elkem"
+)
+
+plt.title(
+    "Fjernvarmeproduksjon fra fliskjel og spillvarme",
+    fontsize=22,
+    pad=23
+)
+
+plt.xlabel("Tid", fontsize=20)
+plt.ylabel("Energi [kWh/døgn]", fontsize=20)
+
+ax = plt.gca()
+ax.yaxis.set_major_formatter(formatter)
+ax.tick_params(axis="both", labelsize=tick_size)
+
+plt.grid(True, alpha=0.3)
+plt.xticks(maanedspunkter, maneder)
+
+plt.legend(
+    fontsize=13,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 0.98),
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
