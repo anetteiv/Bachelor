@@ -1,0 +1,101 @@
+
+import matplotlib.pyplot as plt
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+tick_size = 19
+
+title_size = 22
+title_pad = 23
+
+xlabel_size = 20
+ylabel_size = 20
+labelpad = 12
+
+legend_size = 15
+legend_loc = "upper center"
+
+
+legend_x = 0.865      # høyere verdi = lenger mot høyre
+legend_y = 1.01     # høyere verdi = lenger opp
+legend_bbox = (legend_x, legend_y)
+
+grid_alpha = 0.3
+linewidth = 1.5
+markersize = 7
+
+
+
+# Case 2 (2,5 → 15 MW)
+effekt_case2 = [2.5, 5.0, 7.5, 10.0, 12.5, 15.0]
+flis_case2 = [312, 305, 297, 290, 283, 276]
+
+# Case 1 (2,5 → 10 MW)
+effekt_case1 = [2.5, 5.0, 7.5, 10.0]
+flis_case1 = [-890, -610, -730, -980]
+
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+# Case 2 (blå)
+line1, = ax1.plot(
+    effekt_case2,
+    flis_case2,
+    color="tab:blue",
+    marker="o",
+    linewidth=linewidth,
+    markersize=markersize,
+    label="Case 2"
+)
+
+# Case 1 (oransje)
+line2, = ax1.plot(
+    effekt_case1,
+    flis_case1,
+    color="tab:orange",
+    marker="o",
+    linewidth=linewidth,
+    markersize=markersize,
+    label="Case 1"
+)
+
+ax1.set_xlabel(
+    "Installert effekt [MW]",
+    fontsize=xlabel_size,
+    labelpad=labelpad
+)
+
+ax1.set_ylabel(
+    "Flispris [kr/m$^3$]",
+    fontsize=ylabel_size,
+    labelpad=labelpad
+)
+
+ax1.tick_params(axis="both", labelsize=tick_size)
+
+# X-ticks
+ax1.set_xticks([2.5, 5.0, 7.5, 10.0, 12.5, 15.0])
+
+# Y-akse
+ax1.set_ylim(-1100, 600)
+
+# Grid
+ax1.grid(True, alpha=grid_alpha)
+
+
+ax1.set_title(
+    "Nødvendig flispris for Case 1 og Case 2",
+    fontsize=title_size,
+    pad=title_pad
+)
+
+ax1.legend(
+    [line1, line2],
+    ["Case 2", "Case 1"],
+    fontsize=legend_size,
+    loc=legend_loc,
+    bbox_to_anchor=legend_bbox,
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
