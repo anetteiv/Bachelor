@@ -1,0 +1,92 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams["font.family"] = "Times New Roman"
+
+
+tick_size = 19
+
+title_size = 22
+title_pad = 23
+
+xlabel_size = 20
+ylabel_size = 20
+labelpad = 12
+
+legend_size = 15
+legend_loc = "upper center"
+
+legend_x = 0.52
+legend_y = 0.98
+legend_bbox = (legend_x, legend_y)
+
+grid_alpha = 0.3
+linewidth = 1.5
+markersize = 7
+
+aar = np.array([2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026])
+co2_avgift = np.array([1.50, 1.52, 1.63, 1.77, 2.30, 2.86, 3.53, 4.22, 4.92])
+
+koeff = np.polyfit(aar, co2_avgift, 2)
+poly = np.poly1d(koeff)
+
+aar_glatt = np.linspace(aar.min(), aar.max(), 300)
+co2_regresjon = poly(aar_glatt)
+
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+punkt = ax1.scatter(
+    aar,
+    co2_avgift,
+    color="tab:orange",
+    edgecolor="black",
+    linewidth=0.7,
+    s=55,
+    label="CO$_2$-avgift",
+    zorder=3
+)
+
+linje, = ax1.plot(
+    aar_glatt,
+    co2_regresjon,
+    color="tab:blue",
+    linewidth=linewidth,
+    label="Regresjon (2. grad)"
+)
+
+ax1.set_xlabel(
+    "År",
+    fontsize=xlabel_size,
+    labelpad=labelpad
+)
+
+ax1.set_ylabel(
+    "CO$_2$-avgift [kr/kg LPG]",
+    fontsize=ylabel_size,
+    labelpad=labelpad
+)
+
+ax1.tick_params(axis="both", labelsize=tick_size)
+
+ax1.set_xticks(aar)
+ax1.set_ylim(1.3, 5.2)
+
+ax1.grid(True, alpha=grid_alpha)
+
+ax1.set_title(
+    "Utvikling i CO$_2$-avgift på LPG",
+    fontsize=title_size,
+    pad=title_pad
+)
+
+ax1.legend(
+    [punkt, linje],
+    ["CO$_2$-avgift", "Regresjon (2. grad)"],
+    fontsize=legend_size,
+    loc=legend_loc,
+    bbox_to_anchor=legend_bbox,
+    frameon=True
+)
+
+plt.tight_layout()
+plt.show()
